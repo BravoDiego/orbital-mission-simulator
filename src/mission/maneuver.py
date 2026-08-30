@@ -1,121 +1,101 @@
 import numpy as np
 from dataclasses import dataclass
 
+from src.orbital.state import OrbitalState
+
 
 @dataclass(frozen=True)
 class ManeuverResult:
     """
-    Result of an impulsive maneuver.
+    Result of an instantaneous impulsive maneuver.
     """
 
-    state_before: np.ndarray
-    state_after: np.ndarray
+    state_before: OrbitalState
+    state_after: OrbitalState
 
     delta_v_vector: np.ndarray
     delta_v_magnitude: float
 
 
-def velocity_vector(state: np.ndarray) -> np.ndarray:
+def velocity_magnitude(state: OrbitalState) -> float:
     """
-    Extract velocity vector [vx, vy] from state.
-    """
-
-    state = np.asarray(state, dtype=float)
-
-    if state.shape != (4,):
-        raise ValueError(
-            "State must have shape (4,) = [x, y, vx, vy]."
-        )
-
-    return state[2:4]
-
-
-def velocity_magnitude(state: np.ndarray) -> float:
-    """
-    Return velocity magnitude.
+    Return the spacecraft speed.
     """
 
-    return np.linalg.norm(
-        velocity_vector(state)
-    )
+    return float(np.linalg.norm(state.velocity))
 
 
-def prograde_direction(state: np.ndarray) -> np.ndarray:
+def prograde_direction(state: OrbitalState) -> np.ndarray:
     """
-    Return unit vector pointing in the instantaneous
-    direction of motion.
+    Return the unit vector tangent to the trajectory
+    in the direction of motion.
     """
 
-    velocity = velocity_vector(state)
+    speed = velocity_magnitude(state)
 
-    speed = np.linalg.norm(velocity)
-
-    if speed == 0:
+    if speed == 0.0:
         raise ValueError(
             "Cannot determine prograde direction "
             "when velocity is zero."
         )
 
-    return velocity / speed
+    return state.velocity / speed
 
 
-def retrograde_direction(state: np.ndarray) -> np.ndarray:
+def retrograde_direction(state: OrbitalState) -> np.ndarray:
     """
-    Return unit vector opposite to the direction of motion.
+    Return the unit vector opposite to the direction of motion.
     """
 
     return -prograde_direction(state)
 
 
 def apply_delta_v(
-    state: np.ndarray,
+    state: OrbitalState,
     delta_v_vector: np.ndarray,
 ) -> ManeuverResult:
     """
     Apply an instantaneous velocity change.
 
-    Position is unchanged.
-    Velocity is modified by delta_v_vector.
+    Position remains unchanged.
     """
 
-    state = np.asarray(state, dtype=float)
     delta_v_vector = np.asarray(
         delta_v_vector,
-        dtype=float
+        dtype=float,
     )
 
-    if state.shape != (4,):
+    if delta_v_vector.shape != (3,):
         raise ValueError(
-            "State must have shape (4,) = [x, y, vx, vy]."
+            "delta_v_vector must have shape (3,)."
         )
 
-    if delta_v_vector.shape != (2,):
-        raise ValueError(
-            "delta_v_vector must have shape (2,)."
-        )
+    new_velocity = (
+        state.velocity
+        + delta_v_vector
+    )
 
-    state_after = state.copy()
-
-    state_after[2:4] += delta_v_vector
+    state_after = OrbitalState(
+        position=state.position.copy(),
+        velocity=new_velocity,
+    )
 
     return ManeuverResult(
-        state_before=state.copy(),
+        state_before=state,
         state_after=state_after,
         delta_v_vector=delta_v_vector.copy(),
-        delta_v_magnitude=np.linalg.norm(
-            delta_v_vector
+        delta_v_magnitude=float(
+            np.linalg.norm(delta_v_vector)
         ),
     )
 
 
 def prograde_burn(
-    state: np.ndarray,
+    state: OrbitalState,
     delta_v: float,
 ) -> ManeuverResult:
     """
-    Apply a prograde impulsive burn.
-
-    delta_v must be positive.
+    Apply a positive prograde burn.
     """
 
     if delta_v < 0:
@@ -132,13 +112,11 @@ def prograde_burn(
 
 
 def retrograde_burn(
-    state: np.ndarray,
+    state: OrbitalState,
     delta_v: float,
 ) -> ManeuverResult:
     """
-    Apply a retrograde impulsive burn.
-
-    delta_v must be positive.
+    Apply a positive retrograde burn.
     """
 
     if delta_v < 0:
@@ -153,22 +131,21 @@ def retrograde_burn(
         delta_v * direction,
     )
 
+
 def tangential_burn(
-    state: np.ndarray,
+    state: OrbitalState,
     delta_v: float,
 ) -> ManeuverResult:
     """
     Apply a signed tangential burn.
 
-    Positive delta_v -> prograde.
-    Negative delta_v -> retrograde.
+    delta_v > 0 : prograde
+    delta_v < 0 : retrograde
     """
 
     direction = prograde_direction(state)
 
-    delta_v_vector = delta_v * direction
-
     return apply_delta_v(
         state,
-        delta_v_vector,
+        delta_v * direction,
     )
