@@ -1,1 +1,12 @@
-a
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+ENV/
+pycache/
+*.py[cod]
+*$py.class
