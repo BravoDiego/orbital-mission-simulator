@@ -1,15 +1,30 @@
+"""Scientific diagnostics for complete orbital missions."""
+
 from dataclasses import dataclass
 
 import numpy as np
 
+from src.orbital.state import OrbitalState
 from src.physics.bodies import CelestialBody
-from src.mission.mission import MissionResult
+
+from src.orbital.conservation import (
+    specific_orbital_energy,
+)
+
+from src.orbital.elements import (
+    semi_major_axis,
+    orbital_eccentricity,
+)
+
+from src.mission.mission import (
+    MissionResult,
+)
 
 
 @dataclass(frozen=True)
 class MissionDiagnostics:
     """
-    Time-resolved orbital diagnostics for a complete mission.
+    Time-resolved orbital diagnostics.
     """
 
     times: np.ndarray
@@ -24,21 +39,61 @@ class MissionDiagnostics:
     semi_major_axis: np.ndarray
     eccentricity: np.ndarray
 
-    event_types: tuple[str, ...]
-    phase_labels: tuple[str, ...]
+    event_types: tuple[
+        str,
+        ...
+    ]
+
+    phase_labels: tuple[
+        str,
+        ...
+    ]
 
     @property
-    def burn_indices(self) -> np.ndarray:
-        """
-        Indices corresponding to post-burn states.
-        """
+    def burn_indices(
+        self,
+    ) -> np.ndarray:
 
         return np.array([
             index
+
             for index, event_type
-            in enumerate(self.event_types)
+            in enumerate(
+                self.event_types
+            )
+
             if event_type == "burn"
         ], dtype=int)
+
+
+def _states_from_arrays(
+    positions: np.ndarray,
+    velocities: np.ndarray,
+) -> list[OrbitalState]:
+    """
+    Build OrbitalState objects from Cartesian histories.
+    """
+
+    return [
+        OrbitalState(
+            position=np.array(
+                position,
+                dtype=float,
+                copy=True,
+            ),
+            velocity=np.array(
+                velocity,
+                dtype=float,
+                copy=True,
+            ),
+        )
+
+        for position, velocity
+        in zip(
+            positions,
+            velocities,
+        )
+    ]
 
 
 def _compute_orbital_quantities(
@@ -47,94 +102,68 @@ def _compute_orbital_quantities(
     body: CelestialBody,
 ):
     """
-    Compute orbital quantities from Cartesian states.
+    Compute diagnostics using the canonical orbital modules.
     """
 
-    radii = np.linalg.norm(
-        positions,
-        axis=1,
-    )
-
-    speeds = np.linalg.norm(
-        velocities,
-        axis=1,
-    )
-
-    if np.any(radii == 0.0):
-        raise ValueError(
-            "Orbital diagnostics are undefined at the body's center."
-        )
-
-    # --------------------------------------------------
-    # Specific orbital energy
-    # --------------------------------------------------
-
-    specific_energy = (
-        0.5 * speeds**2
-        - body.mu / radii
-    )
-
-    # --------------------------------------------------
-    # Semi-major axis
-    #
-    # epsilon = -mu / (2a)
-    # --------------------------------------------------
-
-    semi_major_axis = np.full(
-        len(specific_energy),
-        np.nan,
-        dtype=float,
-    )
-
-    non_parabolic = (
-        np.abs(specific_energy)
-        > 1e-12
-    )
-
-    semi_major_axis[
-        non_parabolic
-    ] = (
-        -body.mu
-        / (
-            2.0
-            * specific_energy[
-                non_parabolic
-            ]
-        )
-    )
-
-    # --------------------------------------------------
-    # Eccentricity vector
-    #
-    # e = (v × h)/mu - r_hat
-    # --------------------------------------------------
-
-    angular_momentum = np.cross(
+    states = _states_from_arrays(
         positions,
         velocities,
     )
 
-    eccentricity_vectors = (
-        np.cross(
-            velocities,
-            angular_momentum,
+    radii = np.array([
+        np.linalg.norm(
+            state.position
         )
-        / body.mu
-        - positions
-        / radii[:, np.newaxis]
-    )
 
-    eccentricity = np.linalg.norm(
-        eccentricity_vectors,
-        axis=1,
-    )
+        for state
+        in states
+    ], dtype=float)
+
+    speeds = np.array([
+        np.linalg.norm(
+            state.velocity
+        )
+
+        for state
+        in states
+    ], dtype=float)
+
+    energies = np.array([
+        specific_orbital_energy(
+            state,
+            body,
+        )
+
+        for state
+        in states
+    ], dtype=float)
+
+    semi_major_axes = np.array([
+        semi_major_axis(
+            state,
+            body,
+        )
+
+        for state
+        in states
+    ], dtype=float)
+
+    eccentricities = np.array([
+        orbital_eccentricity(
+            state,
+            body,
+        )
+
+        for state
+        in states
+    ], dtype=float)
 
     return (
         radii,
         speeds,
-        specific_energy,
-        semi_major_axis,
-        eccentricity,
+        energies,
+        semi_major_axes,
+        eccentricities,
     )
 
 
@@ -145,11 +174,9 @@ def compute_mission_diagnostics(
     """
     Reconstruct a complete time-resolved mission history.
 
-    Coast phases contribute all their numerical RK4 samples.
-
-    Burn phases add a new state at the same mission time as
-    the state immediately before the burn. This preserves the
-    instantaneous discontinuity in velocity and orbital elements.
+    Burn states are inserted at the same mission time as
+    the pre-burn state so impulsive discontinuities remain
+    visible in diagnostic plots.
     """
 
     times = [
@@ -157,11 +184,17 @@ def compute_mission_diagnostics(
     ]
 
     positions = [
-        mission.initial_state.position.copy()
+        mission
+        .initial_state
+        .position
+        .copy()
     ]
 
     velocities = [
-        mission.initial_state.velocity.copy()
+        mission
+        .initial_state
+        .velocity
+        .copy()
     ]
 
     event_types = [
@@ -172,10 +205,6 @@ def compute_mission_diagnostics(
         "Mission start"
     ]
 
-    # --------------------------------------------------
-    # Reconstruct phase timeline
-    # --------------------------------------------------
-
     for phase in mission.phases:
 
         if phase.kind == "coast":
@@ -184,11 +213,11 @@ def compute_mission_diagnostics(
                 phase.simulation_result
             )
 
-            # Index 0 is already represented by the
-            # previous mission state.
             for index in range(
                 1,
-                len(simulation.times),
+                len(
+                    simulation.times
+                ),
             ):
 
                 times.append(
@@ -222,8 +251,6 @@ def compute_mission_diagnostics(
                 phase.maneuver_result
             )
 
-            # Same time as before the burn:
-            # only velocity changes.
             times.append(
                 phase.start_time
             )
@@ -253,12 +280,9 @@ def compute_mission_diagnostics(
         else:
 
             raise ValueError(
-                f"Unknown mission phase type: {phase.kind}"
+                f"Unknown mission phase type: "
+                f"{phase.kind}"
             )
-
-    # --------------------------------------------------
-    # Convert to arrays
-    # --------------------------------------------------
 
     times_array = np.asarray(
         times,
@@ -278,13 +302,13 @@ def compute_mission_diagnostics(
     (
         radii,
         speeds,
-        specific_energy,
-        semi_major_axis,
-        eccentricity,
+        energies,
+        semi_major_axes,
+        eccentricities,
     ) = _compute_orbital_quantities(
-        positions=positions_array,
-        velocities=velocities_array,
-        body=body,
+        positions_array,
+        velocities_array,
+        body,
     )
 
     return MissionDiagnostics(
@@ -293,9 +317,13 @@ def compute_mission_diagnostics(
         velocities=velocities_array,
         radii=radii,
         speeds=speeds,
-        specific_energy=specific_energy,
-        semi_major_axis=semi_major_axis,
-        eccentricity=eccentricity,
+        specific_energy=energies,
+        semi_major_axis=(
+            semi_major_axes
+        ),
+        eccentricity=(
+            eccentricities
+        ),
         event_types=tuple(
             event_types
         ),

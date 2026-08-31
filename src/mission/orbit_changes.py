@@ -1,9 +1,16 @@
+"""High-level impulsive orbit-change planning."""
+
 from dataclasses import dataclass
 
 import numpy as np
 
 from src.orbital.state import OrbitalState
 from src.physics.bodies import CelestialBody
+
+from src.orbital.elements import (
+    radial_velocity,
+    apsis_radii,
+)
 
 
 @dataclass(frozen=True)
@@ -28,9 +35,9 @@ def _tangential_direction(
     state: OrbitalState,
 ) -> np.ndarray:
     """
-    Return the unit tangential direction of motion.
+    Return the instantaneous tangential direction of motion.
 
-    The radial component of velocity is removed first.
+    The radial component of velocity is removed.
     """
 
     position = np.asarray(
@@ -53,10 +60,11 @@ def _tangential_direction(
         )
 
     radial_direction = (
-        position / radius
+        position
+        / radius
     )
 
-    radial_velocity_vector = (
+    radial_component = (
         np.dot(
             velocity,
             radial_direction,
@@ -66,7 +74,7 @@ def _tangential_direction(
 
     tangential_velocity = (
         velocity
-        - radial_velocity_vector
+        - radial_component
     )
 
     tangential_speed = np.linalg.norm(
@@ -85,14 +93,15 @@ def _tangential_direction(
     )
 
 
-def radial_velocity(
+def plan_circularization(
     state: OrbitalState,
-) -> float:
+    body: CelestialBody,
+) -> OrbitChangePlan:
     """
-    Return radial velocity.
+    Compute the impulsive delta-v required to circularize
+    at the spacecraft's current position.
 
-    Positive -> moving outward.
-    Negative -> moving inward.
+    Any radial velocity component is removed.
     """
 
     position = np.asarray(
@@ -111,135 +120,16 @@ def radial_velocity(
 
     if radius == 0.0:
         raise ValueError(
-            "Radial velocity is undefined at the center."
+            "Circularization is undefined at the center."
         )
-
-    return float(
-        np.dot(
-            position,
-            velocity,
-        )
-        / radius
-    )
-
-
-def apsis_radii(
-    state: OrbitalState,
-    body: CelestialBody,
-) -> tuple[float, float]:
-    """
-    Return periapsis and apoapsis radii of a bound orbit.
-
-    Returns
-    -------
-    tuple
-        (periapsis_radius, apoapsis_radius)
-    """
-
-    position = np.asarray(
-        state.position,
-        dtype=float,
-    )
-
-    velocity = np.asarray(
-        state.velocity,
-        dtype=float,
-    )
-
-    r = np.linalg.norm(
-        position
-    )
-
-    v = np.linalg.norm(
-        velocity
-    )
-
-    if r == 0.0:
-        raise ValueError(
-            "Orbital elements are undefined at the center."
-        )
-
-    energy = (
-        0.5 * v**2
-        - body.mu / r
-    )
-
-    if energy >= 0.0:
-        raise ValueError(
-            "Apoapsis is not finite for an unbound orbit."
-        )
-
-    semi_major_axis = (
-        -body.mu
-        / (2.0 * energy)
-    )
-
-    angular_momentum = np.cross(
-        position,
-        velocity,
-    )
-
-    eccentricity_vector = (
-        np.cross(
-            velocity,
-            angular_momentum,
-        )
-        / body.mu
-        - position / r
-    )
-
-    eccentricity = np.linalg.norm(
-        eccentricity_vector
-    )
-
-    periapsis = (
-        semi_major_axis
-        * (1.0 - eccentricity)
-    )
-
-    apoapsis = (
-        semi_major_axis
-        * (1.0 + eccentricity)
-    )
-
-    return (
-        float(periapsis),
-        float(apoapsis),
-    )
-
-
-def plan_circularization(
-    state: OrbitalState,
-    body: CelestialBody,
-) -> OrbitChangePlan:
-    """
-    Compute the instantaneous delta-v needed to circularize
-    at the spacecraft's current position.
-
-    Unlike a purely tangential burn, this also removes any
-    radial velocity component.
-    """
-
-    position = np.asarray(
-        state.position,
-        dtype=float,
-    )
-
-    velocity = np.asarray(
-        state.velocity,
-        dtype=float,
-    )
-
-    radius = np.linalg.norm(
-        position
-    )
 
     current_speed = np.linalg.norm(
         velocity
     )
 
     target_speed = np.sqrt(
-        body.mu / radius
+        body.mu
+        / radius
     )
 
     direction = _tangential_direction(
@@ -258,11 +148,21 @@ def plan_circularization(
 
     return OrbitChangePlan(
         name="Circularization",
-        current_radius=float(radius),
-        target_radius=float(radius),
-        current_speed=float(current_speed),
-        target_speed=float(target_speed),
-        delta_v_vector=delta_v_vector,
+        current_radius=float(
+            radius
+        ),
+        target_radius=float(
+            radius
+        ),
+        current_speed=float(
+            current_speed
+        ),
+        target_speed=float(
+            target_speed
+        ),
+        delta_v_vector=(
+            delta_v_vector
+        ),
         delta_v_magnitude=float(
             np.linalg.norm(
                 delta_v_vector
@@ -278,10 +178,8 @@ def plan_set_apoapsis(
     apsis_tolerance: float = 1.0,
 ) -> OrbitChangePlan:
     """
-    Plan a burn at periapsis that sets the opposite
-    apoapsis to target_radius.
-
-    The spacecraft must currently be approximately at an apsis.
+    Plan a burn at an apsis that makes the current point
+    the periapsis and sets the opposite apoapsis.
     """
 
     current_radius = np.linalg.norm(
@@ -299,16 +197,16 @@ def plan_set_apoapsis(
             "Target apoapsis must be above the body's surface."
         )
 
-    vr = radial_velocity(
-        state
-    )
-
-    if abs(vr) > apsis_tolerance:
+    if abs(
+        radial_velocity(
+            state
+        )
+    ) > apsis_tolerance:
         raise ValueError(
             "set_apoapsis must be performed at an apsis."
         )
 
-    semi_major_axis = (
+    semi_major_axis_target = (
         current_radius
         + target_radius
     ) / 2.0
@@ -317,7 +215,8 @@ def plan_set_apoapsis(
         body.mu
         * (
             2.0 / current_radius
-            - 1.0 / semi_major_axis
+            - 1.0
+            / semi_major_axis_target
         )
     )
 
@@ -353,7 +252,9 @@ def plan_set_apoapsis(
         target_speed=float(
             target_speed
         ),
-        delta_v_vector=delta_v_vector,
+        delta_v_vector=(
+            delta_v_vector
+        ),
         delta_v_magnitude=float(
             np.linalg.norm(
                 delta_v_vector
@@ -369,8 +270,8 @@ def plan_set_periapsis(
     apsis_tolerance: float = 1.0,
 ) -> OrbitChangePlan:
     """
-    Plan a burn at apoapsis that sets the opposite
-    periapsis to target_radius.
+    Plan a burn at an apsis that makes the current point
+    the apoapsis and sets the opposite periapsis.
     """
 
     current_radius = np.linalg.norm(
@@ -389,16 +290,16 @@ def plan_set_periapsis(
             "the body's surface."
         )
 
-    vr = radial_velocity(
-        state
-    )
-
-    if abs(vr) > apsis_tolerance:
+    if abs(
+        radial_velocity(
+            state
+        )
+    ) > apsis_tolerance:
         raise ValueError(
             "set_periapsis must be performed at an apsis."
         )
 
-    semi_major_axis = (
+    semi_major_axis_target = (
         current_radius
         + target_radius
     ) / 2.0
@@ -407,7 +308,8 @@ def plan_set_periapsis(
         body.mu
         * (
             2.0 / current_radius
-            - 1.0 / semi_major_axis
+            - 1.0
+            / semi_major_axis_target
         )
     )
 
@@ -443,7 +345,9 @@ def plan_set_periapsis(
         target_speed=float(
             target_speed
         ),
-        delta_v_vector=delta_v_vector,
+        delta_v_vector=(
+            delta_v_vector
+        ),
         delta_v_magnitude=float(
             np.linalg.norm(
                 delta_v_vector
