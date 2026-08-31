@@ -21,6 +21,12 @@ from src.mission.maneuver import (
     tangential_burn as apply_tangential_burn,
 )
 
+from src.mission.orbit_changes import (
+    plan_circularization,
+    plan_set_apoapsis,
+    plan_set_periapsis,
+)
+
 
 PhaseType = Literal[
     "coast",
@@ -842,6 +848,78 @@ class Mission:
         return self._record_burn(
             maneuver,
             label,
+        )
+
+    def circularize(
+        self,
+        label: str | None = None,
+    ) -> ManeuverResult:
+        """
+        Circularize the orbit at the current position.
+        """
+
+        plan = plan_circularization(
+            state=self._current_state,
+            body=self.body,
+        )
+
+        if label is None:
+            label = "Circularization burn"
+
+        return self.burn(
+            delta_v_vector=plan.delta_v_vector,
+            label=label,
+        )
+
+    def set_apoapsis_to(
+        self,
+        target_radius: float,
+        label: str | None = None,
+    ) -> ManeuverResult:
+        """
+        Set the opposite apoapsis radius.
+
+        This burn must be performed near periapsis.
+        """
+
+        plan = plan_set_apoapsis(
+            state=self._current_state,
+            target_radius=target_radius,
+            body=self.body,
+        )
+
+        if label is None:
+            label = "Set apoapsis"
+
+        return self.burn(
+            delta_v_vector=plan.delta_v_vector,
+            label=label,
+        )
+
+
+    def set_periapsis_to(
+        self,
+        target_radius: float,
+        label: str | None = None,
+    ) -> ManeuverResult:
+        """
+        Set the opposite periapsis radius.
+
+        This burn must be performed near apoapsis.
+        """
+
+        plan = plan_set_periapsis(
+            state=self._current_state,
+            target_radius=target_radius,
+            body=self.body,
+        )
+
+        if label is None:
+            label = "Set periapsis"
+
+        return self.burn(
+            delta_v_vector=plan.delta_v_vector,
+            label=label,
         )
 
     def result(
