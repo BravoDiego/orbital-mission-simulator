@@ -64,12 +64,28 @@ class HohmannMissionResult:
 def create_circular_orbit_state(
     radius: float,
     body: CelestialBody,
+    angle: float = 0.0,
 ) -> OrbitalState:
     """
     Create a prograde circular orbit in the xy plane.
 
-    The spacecraft starts on the +x axis and moves
-    in the +y direction.
+    Parameters
+    ----------
+    radius
+        Orbital radius in meters.
+
+    body
+        Central celestial body.
+
+    angle
+        Initial angular position in radians,
+        measured counterclockwise from the +x axis.
+
+    Returns
+    -------
+    OrbitalState
+        Position and velocity corresponding to a
+        prograde circular orbit.
     """
 
     if radius <= body.radius:
@@ -83,17 +99,33 @@ def create_circular_orbit_state(
         body.mu,
     )
 
+    # Radial unit vector
+    radial_direction = np.array([
+        np.cos(angle),
+        np.sin(angle),
+        0.0,
+    ])
+
+    # Prograde tangential unit vector
+    tangential_direction = np.array([
+        -np.sin(angle),
+        np.cos(angle),
+        0.0,
+    ])
+
+    position = (
+        radius
+        * radial_direction
+    )
+
+    velocity = (
+        speed
+        * tangential_direction
+    )
+
     return OrbitalState(
-        position=np.array([
-            radius,
-            0.0,
-            0.0,
-        ]),
-        velocity=np.array([
-            0.0,
-            speed,
-            0.0,
-        ]),
+        position=position,
+        velocity=velocity,
     )
 
 
@@ -101,16 +133,13 @@ def prepare_hohmann_transfer(
     r1: float,
     r2: float,
     body: CelestialBody,
+    initial_angle: float = 0.0,
 ) -> HohmannMissionSetup:
     """
     Prepare a Hohmann transfer between two circular orbits.
 
-    This function:
-    1. creates the initial circular orbit,
-    2. computes the analytical Hohmann transfer,
-    3. applies the first tangential burn.
-
-    It does not propagate the spacecraft.
+    initial_angle gives the spacecraft's initial position
+    around the central body, in radians.
     """
 
     if r1 <= body.radius:
@@ -134,6 +163,7 @@ def prepare_hohmann_transfer(
     initial_state = create_circular_orbit_state(
         radius=r1,
         body=body,
+        angle=initial_angle,
     )
 
     burn1 = tangential_burn(
@@ -211,6 +241,7 @@ def simulate_hohmann_mission(
     r2: float,
     body: CelestialBody,
     dt: float = 10.0,
+    initial_angle: float = 0.0,
 ) -> HohmannMissionResult:
     """
     Simulate a complete ideal Hohmann transfer.
@@ -235,6 +266,7 @@ def simulate_hohmann_mission(
         r1=r1,
         r2=r2,
         body=body,
+        initial_angle=initial_angle,
     )
 
     simulator = create_simulator(

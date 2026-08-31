@@ -213,3 +213,120 @@ def test_leo_to_geo_delta_v_budget():
         3892.55,
         rel=1e-4,
     )
+
+def test_circular_orbit_custom_initial_angle():
+
+    radius = EARTH_RADIUS + 400e3
+
+    angle = np.deg2rad(
+        90.0
+    )
+
+    state = create_circular_orbit_state(
+        radius=radius,
+        body=EARTH,
+        angle=angle,
+    )
+
+    speed = circular_velocity(
+        radius,
+        EARTH.mu,
+    )
+
+    assert np.allclose(
+        state.position,
+        np.array([
+            0.0,
+            radius,
+            0.0,
+        ]),
+        atol=1e-6,
+    )
+
+    assert np.allclose(
+        state.velocity,
+        np.array([
+            -speed,
+            0.0,
+            0.0,
+        ]),
+        atol=1e-6,
+    )
+
+def test_circular_orbit_custom_initial_angle():
+
+    radius = EARTH_RADIUS + 400e3
+
+    angle = np.deg2rad(
+        90.0
+    )
+
+    state = create_circular_orbit_state(
+        radius=radius,
+        body=EARTH,
+        angle=angle,
+    )
+
+    speed = circular_velocity(
+        radius,
+        EARTH.mu,
+    )
+
+    assert np.allclose(
+        state.position,
+        np.array([
+            0.0,
+            radius,
+            0.0,
+        ]),
+        atol=1e-6,
+    )
+
+    assert np.allclose(
+        state.velocity,
+        np.array([
+            -speed,
+            0.0,
+            0.0,
+        ]),
+        atol=1e-6,
+    )
+
+def test_hohmann_arrival_rotates_with_initial_angle():
+
+    r1 = EARTH_RADIUS + 300e3
+    r2 = 42164e3
+
+    initial_angle = np.deg2rad(
+        90.0
+    )
+
+    mission = simulate_hohmann_mission(
+        r1=r1,
+        r2=r2,
+        body=EARTH,
+        dt=10.0,
+        initial_angle=initial_angle,
+    )
+
+    position = (
+        mission
+        .transfer_result
+        .final_state
+        .position
+    )
+
+    assert position[0] == pytest.approx(
+        0.0,
+        abs=1e3,
+    )
+
+    assert position[1] == pytest.approx(
+        -r2,
+        rel=1e-5,
+    )
+
+    assert position[2] == pytest.approx(
+        0.0,
+        abs=1e-6,
+    )
