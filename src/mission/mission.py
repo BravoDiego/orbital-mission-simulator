@@ -1,5 +1,6 @@
 """Generic impulsive orbital mission engine."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -39,6 +40,11 @@ from src.mission.orbit_changes import (
 PhaseType = Literal[
     "coast",
     "burn",
+]
+
+DerivativeFunction = Callable[
+    [OrbitalState],
+    np.ndarray,
 ]
 
 
@@ -248,7 +254,32 @@ class Mission:
         initial_state: OrbitalState,
         body: CelestialBody,
         dt: float = 10.0,
+        derivative: DerivativeFunction | None = None,
     ):
+        """
+        Create a generic orbital mission.
+
+        Parameters
+        ----------
+        initial_state
+            Initial Cartesian spacecraft state.
+
+        body
+            Central celestial body.
+
+        dt
+            Numerical integration time step.
+
+        derivative
+            Optional custom dynamics model.
+
+            When None, the classical two-body Newtonian
+            derivative is used.
+
+            This allows perturbation models such as J2,
+            drag or third-body gravity to be injected
+            without changing the Mission engine.
+        """
 
         if dt <= 0.0:
             raise ValueError(
@@ -256,6 +287,7 @@ class Mission:
             )
 
         self.body = body
+
         self.dt = float(
             dt
         )
@@ -278,14 +310,26 @@ class Mission:
             MissionPhase
         ] = []
 
-        derivative = lambda state: state_derivative(
-            state,
-            self.body,
-        )
+        # ----------------------------------------------
+        # Dynamics model
+        # ----------------------------------------------
+
+        if derivative is None:
+
+            derivative = lambda state: state_derivative(
+                state,
+                self.body,
+            )
+
+        self._derivative = derivative
+
+        # ----------------------------------------------
+        # Numerical simulator
+        # ----------------------------------------------
 
         self._simulator = Simulator(
             integrator=RK4(),
-            derivative=derivative,
+            derivative=self._derivative,
             dt=self.dt,
         )
 
