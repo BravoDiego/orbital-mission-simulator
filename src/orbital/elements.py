@@ -1,6 +1,6 @@
 """Orbital elements and geometric quantities."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import pi, sqrt
 
 import numpy as np
@@ -14,14 +14,19 @@ from src.orbital.conservation import (
 )
 
 
+ANGLE_TOLERANCE = 1e-12
+ECCENTRICITY_TOLERANCE = 1e-10
+
+
 @dataclass(frozen=True)
 class OrbitalElements:
-    """
-    Main orbital elements derived from a Cartesian state.
+    """Main osculating orbital elements derived from a Cartesian state.
 
-    This project currently focuses on quantities useful for
-    two-body mission analysis rather than the full classical
-    six-element representation.
+    Angular quantities are expressed in radians.
+
+    ``raan`` is undefined for equatorial orbits.
+    ``argument_of_periapsis`` and ``true_anomaly`` are undefined for
+    circular orbits and are therefore represented by ``None``.
     """
 
     semi_major_axis: float
@@ -34,9 +39,14 @@ class OrbitalElements:
     eccentricity_vector: np.ndarray
     angular_momentum_vector: np.ndarray
 
-    # --------------------------------------------------
-    # Convenience aliases
-    # --------------------------------------------------
+    # Full 3-D classical geometry. These defaults preserve compatibility
+    # with code that may still instantiate OrbitalElements directly.
+    raan: float | None = None
+    argument_of_periapsis: float | None = None
+    true_anomaly: float | None = None
+    node_vector: np.ndarray = field(
+        default_factory=lambda: np.zeros(3, dtype=float)
+    )
 
     @property
     def a(self) -> float:
@@ -58,13 +68,29 @@ class OrbitalElements:
     def ra(self) -> float | None:
         return self.apoapsis_radius
 
+    @property
+    def omega(self) -> float | None:
+        """Argument of periapsis ω."""
+        return self.argument_of_periapsis
+
+    @property
+    def nu(self) -> float | None:
+        """True anomaly ν."""
+        return self.true_anomaly
+
+
+def _normalize_angle(angle: float) -> float:
+    """Return an angle in the interval [0, 2π)."""
+
+    return float(
+        angle % (2.0 * pi)
+    )
+
 
 def orbital_radius(
     state: OrbitalState,
 ) -> float:
-    """
-    Return the distance from the central body.
-    """
+    """Return the distance from the central body."""
 
     radius = np.linalg.norm(
         state.position
@@ -75,17 +101,13 @@ def orbital_radius(
             "Orbital radius is undefined at the body's center."
         )
 
-    return float(
-        radius
-    )
+    return float(radius)
 
 
 def orbital_speed(
     state: OrbitalState,
 ) -> float:
-    """
-    Return spacecraft speed.
-    """
+    """Return spacecraft speed."""
 
     return float(
         np.linalg.norm(
@@ -97,14 +119,10 @@ def orbital_speed(
 def radial_velocity(
     state: OrbitalState,
 ) -> float:
-    """
-    Return radial velocity.
+    """Return radial velocity.
 
-    Positive
-        Spacecraft moving away from the central body.
-
-    Negative
-        Spacecraft moving toward the central body.
+    Positive means the spacecraft is moving away from the central body;
+    negative means it is moving toward it.
     """
 
     radius = orbital_radius(
@@ -120,22 +138,34 @@ def radial_velocity(
     )
 
 
+def node_vector(
+    state: OrbitalState,
+) -> np.ndarray:
+    """Return the ascending-node vector n = k × h."""
+
+    h_vector = specific_angular_momentum(
+        state
+    )
+
+    return np.array([
+        -h_vector[1],
+        h_vector[0],
+        0.0,
+    ])
+
+
 def eccentricity_vector(
     state: OrbitalState,
     body: CelestialBody,
 ) -> np.ndarray:
-    """
-    Return the orbital eccentricity vector.
-    """
+    """Return the orbital eccentricity vector."""
 
     radius = orbital_radius(
         state
     )
 
-    angular_momentum = (
-        specific_angular_momentum(
-            state
-        )
+    angular_momentum = specific_angular_momentum(
+        state
     )
 
     return (
@@ -152,9 +182,7 @@ def orbital_eccentricity(
     state: OrbitalState,
     body: CelestialBody,
 ) -> float:
-    """
-    Return orbital eccentricity.
-    """
+    """Return orbital eccentricity."""
 
     return float(
         np.linalg.norm(
@@ -169,17 +197,10 @@ def orbital_eccentricity(
 def orbital_inclination(
     state: OrbitalState,
 ) -> float:
-    """
-    Return orbital inclination in radians.
+    """Return orbital inclination in radians."""
 
-    The inclination is the angle between the specific
-    angular-momentum vector and the +z axis.
-    """
-
-    h_vector = (
-        specific_angular_momentum(
-            state
-        )
+    h_vector = specific_angular_momentum(
+        state
     )
 
     h = np.linalg.norm(
@@ -188,12 +209,9 @@ def orbital_inclination(
 
     if h == 0.0:
         raise ValueError(
-            "Orbital inclination is undefined "
-            "for zero angular momentum."
+            "Orbital inclination is undefined for zero angular momentum."
         )
 
-    # Numerical clipping protects arccos from values such as
-    # 1.0000000000000002 caused by floating-point roundoff.
     cos_i = np.clip(
         h_vector[2] / h,
         -1.0,
@@ -207,12 +225,190 @@ def orbital_inclination(
     )
 
 
+def right_ascension_of_ascending_node(
+    state: OrbitalState,
+) -> float | None:
+    """Return the right ascension of the ascending node Ω.
+
+    ``None`` is returned for equatorial orbits, for which the line of
+    nodes does not exist.
+    """
+
+    h_vector = specific_angular_momentum(
+        state
+    )
+
+    h = np.linalg.norm(
+        h_vector
+    )
+
+    if h == 0.0:
+        raise ValueError(
+            "RAAN is undefined for zero angular momentum."
+        )
+
+    n_vector = node_vector(
+        state
+    )
+
+    n = np.linalg.norm(
+        n_vector
+    )
+
+    if n <= ANGLE_TOLERANCE * h:
+        return None
+
+    return _normalize_angle(
+        np.arctan2(
+            n_vector[1],
+            n_vector[0],
+        )
+    )
+
+
+def argument_of_periapsis(
+    state: OrbitalState,
+    body: CelestialBody,
+) -> float | None:
+    """Return the argument of periapsis ω in radians.
+
+    It is undefined for circular or equatorial orbits.
+    """
+
+    h_vector = specific_angular_momentum(
+        state
+    )
+
+    h = np.linalg.norm(
+        h_vector
+    )
+
+    if h == 0.0:
+        raise ValueError(
+            "Argument of periapsis is undefined for zero angular momentum."
+        )
+
+    n_vector = node_vector(
+        state
+    )
+    n = np.linalg.norm(
+        n_vector
+    )
+
+    e_vector = eccentricity_vector(
+        state,
+        body,
+    )
+    e = np.linalg.norm(
+        e_vector
+    )
+
+    if e <= ECCENTRICITY_TOLERANCE:
+        return None
+
+    if n <= ANGLE_TOLERANCE * h:
+        return None
+
+    cosine = np.clip(
+        np.dot(
+            n_vector,
+            e_vector,
+        )
+        / (n * e),
+        -1.0,
+        1.0,
+    )
+
+    sine = (
+        np.dot(
+            np.cross(
+                n_vector,
+                e_vector,
+            ),
+            h_vector,
+        )
+        / (n * e * h)
+    )
+
+    return _normalize_angle(
+        np.arctan2(
+            sine,
+            cosine,
+        )
+    )
+
+
+def true_anomaly(
+    state: OrbitalState,
+    body: CelestialBody,
+) -> float | None:
+    """Return true anomaly ν in radians.
+
+    Classical true anomaly is undefined for a circular orbit because
+    there is no unique periapsis direction.
+    """
+
+    radius = orbital_radius(
+        state
+    )
+
+    h_vector = specific_angular_momentum(
+        state
+    )
+    h = np.linalg.norm(
+        h_vector
+    )
+
+    if h == 0.0:
+        raise ValueError(
+            "True anomaly is undefined for zero angular momentum."
+        )
+
+    e_vector = eccentricity_vector(
+        state,
+        body,
+    )
+    e = np.linalg.norm(
+        e_vector
+    )
+
+    if e <= ECCENTRICITY_TOLERANCE:
+        return None
+
+    cosine = np.clip(
+        np.dot(
+            e_vector,
+            state.position,
+        )
+        / (e * radius),
+        -1.0,
+        1.0,
+    )
+
+    sine = (
+        np.dot(
+            np.cross(
+                e_vector,
+                state.position,
+            ),
+            h_vector,
+        )
+        / (e * radius * h)
+    )
+
+    return _normalize_angle(
+        np.arctan2(
+            sine,
+            cosine,
+        )
+    )
+
+
 def semi_major_axis(
     state: OrbitalState,
     body: CelestialBody,
 ) -> float:
-    """
-    Return semi-major axis from specific orbital energy.
+    """Return semi-major axis from specific orbital energy.
 
     For a parabolic orbit, the semi-major axis is infinite.
     Hyperbolic trajectories naturally return a negative value.
@@ -241,15 +437,7 @@ def apsis_radii(
     state: OrbitalState,
     body: CelestialBody,
 ) -> tuple[float, float]:
-    """
-    Return periapsis and apoapsis radii for a bound
-    elliptical orbit.
-
-    Returns
-    -------
-    tuple
-        (periapsis_radius, apoapsis_radius)
-    """
+    """Return periapsis and apoapsis radii for a bound ellipse."""
 
     energy = specific_orbital_energy(
         state,
@@ -276,15 +464,8 @@ def apsis_radii(
             "A finite apoapsis exists only for an elliptical orbit."
         )
 
-    periapsis = (
-        a
-        * (1.0 - e)
-    )
-
-    apoapsis = (
-        a
-        * (1.0 + e)
-    )
+    periapsis = a * (1.0 - e)
+    apoapsis = a * (1.0 + e)
 
     return (
         float(periapsis),
@@ -296,9 +477,7 @@ def periapsis_radius(
     state: OrbitalState,
     body: CelestialBody,
 ) -> float:
-    """
-    Return periapsis radius for a bound orbit.
-    """
+    """Return periapsis radius for a bound orbit."""
 
     periapsis, _ = apsis_radii(
         state,
@@ -312,9 +491,7 @@ def apoapsis_radius(
     state: OrbitalState,
     body: CelestialBody,
 ) -> float:
-    """
-    Return apoapsis radius for a bound orbit.
-    """
+    """Return apoapsis radius for a bound orbit."""
 
     _, apoapsis = apsis_radii(
         state,
@@ -328,8 +505,7 @@ def orbital_period_from_state(
     state: OrbitalState,
     body: CelestialBody,
 ) -> float:
-    """
-    Return orbital period from a Cartesian state.
+    """Return orbital period from a Cartesian state.
 
     Only bound elliptical orbits possess a finite period.
     """
@@ -364,9 +540,7 @@ def compute_orbital_elements(
     state: OrbitalState,
     body: CelestialBody,
 ) -> OrbitalElements:
-    """
-    Compute the main orbital elements from a Cartesian state.
-    """
+    """Compute the main osculating elements from a Cartesian state."""
 
     a = semi_major_axis(
         state,
@@ -377,21 +551,36 @@ def compute_orbital_elements(
         state,
         body,
     )
-
     e = float(
         np.linalg.norm(
             e_vector
         )
     )
 
-    h_vector = (
-        specific_angular_momentum(
-            state
-        )
+    h_vector = specific_angular_momentum(
+        state
     )
 
     inclination = orbital_inclination(
         state
+    )
+
+    n_vector = node_vector(
+        state
+    )
+
+    raan = right_ascension_of_ascending_node(
+        state
+    )
+
+    omega = argument_of_periapsis(
+        state,
+        body,
+    )
+
+    nu = true_anomaly(
+        state,
+        body,
     )
 
     energy = specific_orbital_energy(
@@ -399,30 +588,15 @@ def compute_orbital_elements(
         body,
     )
 
-    if (
-        energy < 0.0
-        and e < 1.0
-    ):
-
-        rp = (
-            a
-            * (1.0 - e)
-        )
-
-        ra = (
-            a
-            * (1.0 + e)
-        )
-
+    if energy < 0.0 and e < 1.0:
+        rp = a * (1.0 - e)
+        ra = a * (1.0 + e)
     else:
-
         rp = None
         ra = None
 
     return OrbitalElements(
-        semi_major_axis=float(
-            a
-        ),
+        semi_major_axis=float(a),
         eccentricity=e,
         inclination=inclination,
         periapsis_radius=(
@@ -441,6 +615,12 @@ def compute_orbital_elements(
         angular_momentum_vector=(
             h_vector.copy()
         ),
+        raan=raan,
+        argument_of_periapsis=omega,
+        true_anomaly=nu,
+        node_vector=(
+            n_vector.copy()
+        ),
     )
 
 
@@ -452,9 +632,7 @@ def orbital_elements(
     state: OrbitalState,
     body: CelestialBody,
 ) -> OrbitalElements:
-    """
-    Alias for compute_orbital_elements().
-    """
+    """Alias for compute_orbital_elements()."""
 
     return compute_orbital_elements(
         state,
@@ -466,9 +644,7 @@ def state_to_orbital_elements(
     state: OrbitalState,
     body: CelestialBody,
 ) -> OrbitalElements:
-    """
-    Alias for compute_orbital_elements().
-    """
+    """Alias for compute_orbital_elements()."""
 
     return compute_orbital_elements(
         state,
