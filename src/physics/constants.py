@@ -8,3 +8,5 @@ EARTH_RADIUS = 6_378_137.0      # [m]
 EARTH_MU = 3.986004418e14       # [m^3 s^-2] G*Mass terre
 # Earth's second zonal harmonic coefficient.
 EARTH_J2 = 1.08262668e-3
+# Earth sidereal rotation rate [rad/s]
+EARTH_ROTATION_RATE = 7.2921150e-5
