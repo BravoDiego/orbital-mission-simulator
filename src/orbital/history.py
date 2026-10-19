@@ -258,24 +258,14 @@ def compute_orbital_elements_history(
     )
 
 
-def secular_rate(
+def linear_rate(
     times: np.ndarray,
-    angles: np.ndarray,
+    values: np.ndarray,
 ) -> float:
-    """Estimate a secular angular rate by least-squares linear fitting.
+    """Estimate a linear secular rate by least-squares fitting.
 
-    Parameters
-    ----------
-    times
-        Time samples in seconds.
-    angles
-        Angle samples in radians. ``NaN`` values are ignored and the finite
-        values are unwrapped before fitting.
-
-    Returns
-    -------
-    float
-        Best-fit angular rate in rad/s.
+    ``NaN`` and infinite samples are ignored. The returned slope has units
+    of ``values`` per second when ``times`` is expressed in seconds.
     """
 
     times = np.asarray(
@@ -283,44 +273,65 @@ def secular_rate(
         dtype=float,
     )
 
-    angles = np.asarray(
-        angles,
+    values = np.asarray(
+        values,
         dtype=float,
     )
 
     if (
         times.ndim != 1
-        or angles.ndim != 1
+        or values.ndim != 1
     ):
         raise ValueError(
-            "Times and angles must be one-dimensional arrays."
+            "Times and values must be one-dimensional arrays."
         )
 
-    if len(times) != len(angles):
+    if len(times) != len(values):
         raise ValueError(
-            "Times and angles must contain the same number of samples."
+            "Times and values must contain the same number of samples."
         )
-
-    unwrapped = unwrap_defined_angles(
-        angles
-    )
 
     finite = (
         np.isfinite(times)
-        & np.isfinite(unwrapped)
+        & np.isfinite(values)
     )
 
     if np.count_nonzero(
         finite
     ) < 2:
         raise ValueError(
-            "At least two finite angular samples are required."
+            "At least two finite samples are required."
         )
 
     return float(
         np.polyfit(
             times[finite],
-            unwrapped[finite],
+            values[finite],
             deg=1,
         )[0]
+    )
+
+
+def secular_rate(
+    times: np.ndarray,
+    angles: np.ndarray,
+) -> float:
+    """Estimate a secular angular rate by least-squares linear fitting.
+
+    Angles are unwrapped before the generic linear fit so that 2π crossings
+    do not create artificial jumps. The result is expressed in rad/s.
+    """
+
+    angles = np.asarray(
+        angles,
+        dtype=float,
+    )
+
+    unwrapped = unwrap_defined_angles(
+        angles
+    )
+
+    return linear_rate(
+        times,
+        unwrapped,
     )
