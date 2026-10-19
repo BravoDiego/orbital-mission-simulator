@@ -42,3 +42,10 @@ EARTH = CelestialBody(
     radius=EARTH_RADIUS,
     mu=EARTH_MU,
 )
+
+MOON = CelestialBody(
+    name="Moon",
+    mass=MOON_MASS,
+    radius=MOON_RADIUS,
+    mu=MOON_MU,
+)

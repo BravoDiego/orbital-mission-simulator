@@ -42,10 +42,7 @@ PhaseType = Literal[
     "burn",
 ]
 
-DerivativeFunction = Callable[
-    [OrbitalState],
-    np.ndarray,
-]
+DerivativeFunction = Callable[..., np.ndarray]
 
 
 def _copy_state(
@@ -395,6 +392,7 @@ class Mission:
             self._simulator.run(
                 initial_state=self._current_state,
                 duration=duration,
+                start_time=self._elapsed_time,
             )
         )
 
@@ -487,6 +485,7 @@ class Mission:
             self._simulator.run(
                 initial_state=self._current_state,
                 duration=search_duration,
+                start_time=self._elapsed_time,
             )
         )
 
